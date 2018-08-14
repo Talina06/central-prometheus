@@ -1,0 +1,24 @@
+# my global config
+global:
+  scrape_interval:     4s # Set the scrape interval to every 1 second. Default is every 1 minute.
+  evaluation_interval: 4s # Evaluate rules every 1 second. The default is every 1 minute.
+  # scrape_timeout is set to the global default (10s).
+
+  # Attach these labels to any time series or alerts when communicating with
+  # external systems (federation, remote storage, Alertmanager).
+  external_labels:
+      monitor: 'ts-app-indonesia'
+
+remote_write:
+        - url: "http://adapter:9201/write"
+
+# A scrape configuration containing exactly one endpoint to scrape:
+# Here it's Prometheus itself.
+scrape_configs:
+  - job_name: 'ts-app-indonesia'
+
+    # metrics_path defaults to '/metrics'
+    # scheme defaults to 'http'.
+    static_configs:
+      - targets: ['ts-app:8080']
+

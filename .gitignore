@@ -1,1 +1,4 @@
 prometheus-example-app
+vendor
+.idea
+*.log
