@@ -4,5 +4,5 @@ route:
 receivers:
 - name: 'pager'
   pagerduty_configs:
-  - service_key: a52a7dccf580463d82fe5be21206f1db 
+  - service_key: PAGERDUTY_KEY
 
