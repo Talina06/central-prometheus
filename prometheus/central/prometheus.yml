@@ -1,4 +1,4 @@
-# my global config
+# Central Prometheus which reads from remote storage.
 global:
   scrape_interval:     4s # Set the scrape interval to every 1 second. Default is every 1 minute.
   evaluation_interval: 4s # Evaluate rules every 1 second. The default is every 1 minute.
@@ -21,6 +21,7 @@ alerting:
     - targets:
       - "alertmanager:9093"
 
+# A single influxdb to read from.
 remote_read:
         - url: "http://adapter:9201/read"
 

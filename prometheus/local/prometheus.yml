@@ -1,4 +1,5 @@
-# my global config
+# Local Prometheus which pulls metrics and writes to a remote storage.
+# global config:
 global:
   scrape_interval:     4s # Set the scrape interval to every 1 second. Default is every 1 minute.
   evaluation_interval: 4s # Evaluate rules every 1 second. The default is every 1 minute.
@@ -8,12 +9,15 @@ global:
   # external systems (federation, remote storage, Alertmanager).
   external_labels:
       monitor: 'ts-app-indonesia'
+      telco_id: 'source-telco-1'
 
+# Always one and same single endpoint.
 remote_write:
         - url: "http://adapter:9201/write"
 
 # A scrape configuration containing exactly one endpoint to scrape:
 # Here it's Prometheus itself.
+# Multiple scrape endpoint services.
 scrape_configs:
   - job_name: 'ts-app-indonesia'
 

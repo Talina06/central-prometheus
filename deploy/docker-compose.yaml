@@ -74,6 +74,10 @@ services:
      dockerfile: Dockerfile
     image: adapter
     restart: always
+    environment:
+      - INFLUXDB=prometheus
+      - INFLUXDB_RP=autogen
+      - INFLUXDB_URL=http://influxdb:8086
     ports:
       - 9201:9201
     environment:
