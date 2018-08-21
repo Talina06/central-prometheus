@@ -58,7 +58,7 @@ func TestChannel(t *testing.T) {
 		wg.Wait()
 		beforeSleep := len(writer.store)
 		writeSamplesToChannel(ch)
-		time.Sleep(2 * time.Second)
+		time.Sleep(5 * time.Second)
 		afterSleep := len(writer.store)
 		if afterSleep <= beforeSleep {
 			t.Fatalf("The count of messages should have increased.")
@@ -67,8 +67,8 @@ func TestChannel(t *testing.T) {
 }
 
 
-func TestMain(t *testing.M) {
-	os.Exit(t.Run())
+func TestMain(m *testing.M) {
+	os.Exit(m.Run())
 }
 
 

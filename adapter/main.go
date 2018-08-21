@@ -1,153 +1,75 @@
-// Copyright 2017 The Prometheus Authors
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-// http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-// The main package for the Prometheus server executable.
 package main
 
 import (
-	"flag"
-	"fmt"
 	"io/ioutil"
 	"net/http"
 	_ "net/http/pprof"
-	"net/url"
 	"os"
 	"time"
 
-	"github.com/go-kit/kit/log"
-	"github.com/go-kit/kit/log/level"
 	"github.com/gogo/protobuf/proto"
 	"github.com/golang/snappy"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/common/model"
 
-	influx "github.com/influxdata/influxdb/client/v2"
-
-	"github.com/prometheus/common/promlog"
 	"github.com/prometheus/prometheus/prompb"
-	"prom-alertmanager/adapter/client"
+	"gopkg.in/alecthomas/kingpin.v2"
 	"github.com/meson10/highbrow"
 	"os/signal"
+	"fmt"
+
+	"prom-alertmanager/adapter/database"
 )
 
-type config struct {
-	influxdbURL             string
-	influxdbRetentionPolicy string
-	influxdbUsername        string
-	influxdbDatabase        string
-	influxdbPassword        string
-	remoteTimeout           time.Duration
-	listenAddr              string
-	telemetryPath           string
-	logLevel                string
-}
-
-const RateLimit = 50
+const (
+	Version = "0.1.0"
+	RateLimit = 40
+)
 
 var (
+	timeout = kingpin.Flag("timeout", "Timeout for writing to remote storage").Default("10000").String()
+	address = kingpin.Flag("address", "Listen to address").Default(":9201").String()
+	config = kingpin.Flag("config-path", "Config path of prometheus.").String()
+	logLevel = kingpin.Flag("log-level", "Level of logging to enable.").Default("debug").String()
+	readOnly = kingpin.Flag("readOnly", "If the app is to only read from the remote storage").
+		Default("false").Bool()
 	mChannel = make(chan *model.Samples)
 )
 
 func main() {
-	cfg := parseFlags()
-	http.Handle(cfg.telemetryPath, prometheus.Handler())
+	kingpin.Version(Version)
+	kingpin.Parse()
 
-	logLevel := promlog.AllowedLevel{}
-	logLevel.Set(cfg.logLevel)
-	logger := promlog.New(logLevel)
+	client := buildClient()
+	if err := client.Ping(); err != nil {
+		panic(err)
+	}
 
-	client := buildClients(logger, cfg)
-	serve(logger, cfg.listenAddr, client)
+	serve(*address , client)
 }
 
-func parseFlags() *config {
-	cfg := &config{
-		influxdbPassword: os.Getenv("INFLUXDB_PW"),
-	}
-
-	flag.StringVar(&cfg.influxdbURL, "influxdb-url", "",
-		"The URL of the remote InfluxDB server to send samples to. None, if empty.",
-	)
-	flag.StringVar(&cfg.influxdbRetentionPolicy, "influxdb.retention-policy", "autogen",
-		"The InfluxDB retention policy to use.",
-	)
-	flag.StringVar(&cfg.influxdbUsername, "influxdb.username", "",
-		"The username to use when sending samples to InfluxDB. The corresponding password must be provided via the INFLUXDB_PW environment variable.",
-	)
-	flag.StringVar(&cfg.influxdbDatabase, "influxdb.database", "prometheus",
-		"The name of the database to use for storing samples in InfluxDB.",
-	)
-	flag.DurationVar(&cfg.remoteTimeout, "send-timeout", 30*time.Second,
-		"The timeout to use when sending samples to the remote storage.",
-	)
-	flag.StringVar(&cfg.listenAddr, "web.listen-address", ":9201", "Address to listen on for web endpoints.")
-	flag.StringVar(&cfg.telemetryPath, "web.telemetry-path", "/metrics", "Address to listen on for web endpoints.")
-	flag.StringVar(&cfg.logLevel, "log.level", "debug", "Only log messages with the given severity or above. One of: [debug, info, warn, error]")
-
-	flag.Parse()
-
-	return cfg
+func buildClient() (*database.Client) {
+	pgClient := database.NewClient()
+	return pgClient
 }
 
-func buildClients(logger log.Logger, cfg *config) (*influxdb.Client) {
-	if cfg.influxdbURL == "" {
-		return nil
-	}
-
-	url, err := url.Parse(cfg.influxdbURL)
-	if err != nil {
-		level.Error(logger).Log("msg", "Failed to parse InfluxDB URL", "url", cfg.influxdbURL, "err", err)
-		os.Exit(1)
-	}
-
-	conf := influx.HTTPConfig{
-		Addr:     url.String(),
-		Username: cfg.influxdbUsername,
-		Password: cfg.influxdbPassword,
-		Timeout:  cfg.remoteTimeout,
-	}
-	c := influxdb.NewClient(
-		log.With(logger, "storage", "InfluxDB"),
-		conf,
-		cfg.influxdbDatabase,
-		cfg.influxdbRetentionPolicy,
-	)
-	prometheus.MustRegister(c)
-
-	return c
-}
-
-func serve(logger log.Logger, addr string, client *influxdb.Client) error {
+func serve(addr string, client *database.Client) error {
 	go readFromChannel(makeLimiter(), client, mChannel)
 
 	http.HandleFunc("/write", func(w http.ResponseWriter, r *http.Request) {
 		compressed, err := ioutil.ReadAll(r.Body)
 		if err != nil {
-			level.Error(logger).Log("msg", "Read error", "err", err.Error())
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
 		reqBuf, err := snappy.Decode(nil, compressed)
 		if err != nil {
-			level.Error(logger).Log("msg", "Decode error", "err", err.Error())
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
 		var req prompb.WriteRequest
 		if err := proto.Unmarshal(reqBuf, &req); err != nil {
-			level.Error(logger).Log("msg", "Unmarshal error", "err", err.Error())
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -159,21 +81,18 @@ func serve(logger log.Logger, addr string, client *influxdb.Client) error {
 	http.HandleFunc("/read", func(w http.ResponseWriter, r *http.Request) {
 		compressed, err := ioutil.ReadAll(r.Body)
 		if err != nil {
-			level.Error(logger).Log("msg", "Read error", "err", err.Error())
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
 		reqBuf, err := snappy.Decode(nil, compressed)
 		if err != nil {
-			level.Error(logger).Log("msg", "Decode error", "err", err.Error())
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
 		var req prompb.ReadRequest
 		if err := proto.Unmarshal(reqBuf, &req); err != nil {
-			level.Error(logger).Log("msg", "Unmarshal error", "err", err.Error())
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -187,7 +106,6 @@ func serve(logger log.Logger, addr string, client *influxdb.Client) error {
 		var resp *prompb.ReadResponse
 		resp, err = client.Read(&req)
 		if err != nil {
-			level.Warn(logger).Log("msg", "Error executing query", "query", req, "storage", client.Name(), "err", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -230,7 +148,7 @@ func protoToSamples(req *prompb.WriteRequest) model.Samples {
 	return samples
 }
 
-func readFromChannel(l *highbrow.RateLimiter, writer *influxdb.Client, mChannel chan *model.Samples) {
+func readFromChannel(l *highbrow.RateLimiter, writer *database.Client, mChannel chan *model.Samples) {
 	go handleInterrupts()
 
 	t := l.Start()
@@ -258,3 +176,4 @@ func handleInterrupts() {
 func makeLimiter() *highbrow.RateLimiter {
 	return highbrow.NewLimiter(RateLimit)
 }
+
